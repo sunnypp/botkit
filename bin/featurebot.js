@@ -32,6 +32,21 @@ if (!process.env.clientId || !process.env.clientSecret || !process.env.port) {
   process.exit(1);
 }
 
+var feature_servers = {
+	feature_numbers: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9 ],
+	// using _ to indicate input *before* passing bot and message
+	freeSite_ByUser_: ( number, user, bot, message ) => {
+		
+	},
+	
+	makeStatusText: ( servers ) => {
+		return 'Feature servers: ' + feature_servers.feature_numbers.map( i => servers.list[i] ? `:red_circle: ${i}` : `:white_circle: ${i}` ).join` | `;
+	},
+	
+	makeFullStatusText: ( servers ) => {
+		return feature_servers.feature_numbers.map( i => servers.list[i] ? `:red_circle: Feature ${i} being used by ${servers.list[i]}` : `:white_circle: Feature ${i} is free` ).join`\n`;
+	},
+};
 
 var controller = Botkit.slackbot({
   // interactive_replies: true, // tells botkit to send button clicks into conversations
@@ -40,7 +55,7 @@ var controller = Botkit.slackbot({
   {
     clientId: process.env.clientId,
     clientSecret: process.env.clientSecret,
-    scopes: ['bot'],
+    scopes: ['bot', 'commands', 'channels:write'],
   }
 );
 
@@ -64,83 +79,12 @@ function trackBot(bot) {
   _bots[bot.config.token] = bot;
 }
 
-
-controller.on('interactive_message_callback', function(bot, message) {
-
-    var ids = message.callback_id.split(/\-/);
-    var user_id = ids[0];
-    var item_id = ids[1];
-
-    controller.storage.users.get(user_id, function(err, user) {
-
-        if (!user) {
-            user = {
-                id: user_id,
-                list: []
-            }
-        }
-
-        for (var x = 0; x < user.list.length; x++) {
-            if (user.list[x].id == item_id) {
-                if (message.actions[0].value=='flag') {
-                    user.list[x].flagged = !user.list[x].flagged;
-                }
-                if (message.actions[0].value=='delete') {
-                    user.list.splice(x,1);
-                }
-            }
-        }
-
-
-        var reply = {
-            text: 'Here is <@' + user_id + '>s list:',
-            attachments: [],
-        }
-
-        for (var x = 0; x < user.list.length; x++) {
-            reply.attachments.push({
-                title: user.list[x].text + (user.list[x].flagged? ' *FLAGGED*' : ''),
-                callback_id: user_id + '-' + user.list[x].id,
-                attachment_type: 'default',
-                actions: [
-                    {
-                        "name":"flag",
-                        "text": ":waving_black_flag: Flag",
-                        "value": "flag",
-                        "type": "button",
-                    },
-                    {
-                       "text": "Delete",
-                        "name": "delete",
-                        "value": "delete",
-                        "style": "danger",
-                        "type": "button",
-                        "confirm": {
-                          "title": "Are you sure?",
-                          "text": "This will do something!",
-                          "ok_text": "Yes",
-                          "dismiss_text": "No"
-                        }
-                    }
-                ]
-            })
-        }
-
-        bot.replyInteractive(message, reply);
-        controller.storage.users.save(user);
-
-
-    });
-
-});
-
-
 controller.on('create_bot',function(bot,config) {
 
   if (_bots[bot.config.token]) {
     // already online! do nothing.
   } else {
-    bot.startRTM(function(err) {
+    bot.spawn({token: process.env.token }).startRTM(function(err) {
 
       if (!err) {
         trackBot(bot);
@@ -170,11 +114,25 @@ controller.on('rtm_close',function(bot) {
   console.log('** The RTM api just closed');
   // you may want to attempt to re-open
 });
+/*
+controller.on('slash_command', (bot,message) => {
+	
+	let [msg, number, branch] = message.command.match(/^feature\s+(\d)\s*(.*$)/);
+	
+	if ( number == '' ) {
+		bot.replyPrivate( message, 'Please specify the feature server number with a space after the `/feature` command.' );
+		return;
+	}
+	
+	if ( branch == '' ) {
+		
+	}
+	
+});
+*/
+controller.hears([ /us(?:e|ing)\s+feature\s*(\d)/i , /building.*feature\s*(\d)/i ],'direct_mention,direct_message,ambient', (bot,message) => {
 
-
-controller.hears([ /us(?:e|ing)\s+feature\s*(\d)/i , /building.*feature\s*(\d)/i ],'direct_mention,direct_message,ambient',function(bot,message) {
-
-    controller.storage.users.get(message.user, function(err, user) {
+    controller.storage.users.get(message.user, (err, user) => {
 
         if (!user) {
             user = {
@@ -182,10 +140,10 @@ controller.hears([ /us(?:e|ing)\s+feature\s*(\d)/i , /building.*feature\s*(\d)/i
 				name: 'Someone'
             }
 			
-			bot.reply(message, 'I don\'t know your name yet.  Try telling me `call me <your-name>` or introduce yourself to me via `my name is <your-name>`. :smile:');
+			bot.reply(message, 'I don\'t know your name yet.  Try telling me `@ecomtestsites call me <your-name>` or introduce yourself to me via `@ecomtestsites my name is <your-name>`. :smile:');
         }
 				
-		controller.storage.users.get('__feature_server__', function(e, servers) {
+		controller.storage.users.get('__feature_server__', (e, servers) => {
 			if (!servers) {
 				servers = {
 					id: '__feature_server__',
@@ -195,15 +153,33 @@ controller.hears([ /us(?:e|ing)\s+feature\s*(\d)/i , /building.*feature\s*(\d)/i
 			
 			var feature_id = message.match[1];
 			
-			if ( servers.list[feature_id] != '' ) {
-				bot.reply(message, `Feature ${feature_id} is being used by *${servers.list[feature_id]}*. Please check with him if you can build on it.\nIf yes, please tell ${servers.list[feature_id]} to free it or you may _forcefully_ free it by \`Forcefully free feature ${feature_id}\``);
+			if ( servers.list[feature_id] != '' && servers.list[feature_id] != user.name ) {
+				bot.reply(message, `Feature ${feature_id} is being used by *${servers.list[feature_id]}*. Please ask if (s)he wants you to build on it.\nIf yes, please tell ${servers.list[feature_id]} to free it or you may _forcefully_ free it by \`Forcefully free feature ${feature_id}\``);
 				return;
-			} else {
+			}
+			else {
 				servers.list[feature_id] = user.name;
 			
 				controller.storage.users.save(servers);			
 			
-				bot.reply(message, [0, 1, 2, 3, 4].map( i => `Feature ${i} being used by ${servers.list[i]}` ).join("\n"));
+				//bot.reply(message, [0, 1, 2, 3, 4].map( i => servers.list[i] ? `Feature ${i} being used by ${servers.list[i]}` : `Feature ${i} is free` ));
+				
+				/*
+				bot.api.channels.setTopic({ 
+					channel: message.channel, 
+					topic: 'FEATURE — ' + [0, 1, 2, 3, 4].map( i => ' — ' + i + ( servers.list[i] == '' ? ':white_check_mark:' : `:x:${servers.list[i]}`) ).join(' — ')
+				}, (api_err) => { if (api_err) { console.log(api_err) } });
+				*/
+				bot.api.reactions.add({ timestamp: message.ts, channel: message.channel, name: 'white_check_mark', }, (api_err) => { if (api_err) { console.log(api_err) } });
+
+				/*							
+				let literals = ["zero", "one", "two", "three", "four"];
+
+				[0, 1, 2, 3, 4].filter( i => servers.list[i] == '' ).map( i => {
+					bot.api.reactions.add({ timestamp: message.ts, channel: message.channel, name: literals[i], }, (api_err) => { if (api_err) { console.log(api_err) } });
+				});
+				*/
+								
 			}
 			
 		});
@@ -212,6 +188,52 @@ controller.hears([ /us(?:e|ing)\s+feature\s*(\d)/i , /building.*feature\s*(\d)/i
 
     });
 	
+});
+
+controller.hears([ /forcefully\s+free\s+feature\s*(\d)/i ], 'direct_mention,direct_message,ambient', (bot, message) => {
+
+	controller.storage.users.get('__feature_server__', (e, servers) => {
+		if (!servers) {
+			return;
+		}
+		
+		var feature_id = message.match[1];
+		servers.list[feature_id] = '';
+
+		controller.storage.users.save(servers);
+					
+		bot.reply( message, feature_servers.makeFullStatusText(servers) );
+		
+	});
+
+});
+
+
+controller.hears([ /feature\s+full\s+status/i ], 'direct_mention,direct_message,ambient', (bot, message) => {
+
+	controller.storage.users.get('__feature_server__', (e, servers) => {
+		if (!servers) {
+			return;
+		}
+		
+		bot.reply( message, feature_servers.makeFullStatusText(servers) );
+		
+	});
+
+});
+
+
+controller.hears([ /feature\s+status/i ], 'direct_mention,direct_message,ambient', (bot, message) => {
+
+	controller.storage.users.get('__feature_server__', (e, servers) => {
+		if (!servers) {
+			return;
+		}
+		
+		bot.reply( message, feature_servers.makeStatusText(servers) );
+		
+	});
+
 });
 
 controller.hears([ /free\s+feature\s*(\d)/i, /feature\s*(\d).*free/i ], 'direct_mention,direct_message,ambient', (bot, message) => {
@@ -240,13 +262,21 @@ controller.hears([ /free\s+feature\s*(\d)/i, /feature\s*(\d).*free/i ], 'direct_
 				} 
 				
 				servers.list[feature_id] = '';
-			} else {
-				bot.reply(message, `Feature ${feature_id} is being used by *${servers.list[feature_id]}*. Please check with him if you can build on it.\nIf yes, please tell ${servers.list[feature_id]} to free it or you may _forcefully_ free it by \`Forcefully free feature ${feature_id}\``);
+			} 
+			else if ( servers.list[feature_id] == '' ) {
+				bot.reply(message, `The site was not recorded to be used by anyone... Did I miss anything? :thinking_face:`);
+			} 
+			else {
+				bot.reply(message, `Feature ${feature_id} is being used by *${servers.list[feature_id]}*. Please ask if (s)he wants you to build on it.\nIf yes, please tell ${servers.list[feature_id]} to free it or you may _forcefully_ free it by \`Forcefully free feature ${feature_id}\``);
 			}
+							
+			let literals = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+			
+			feature_servers.feature_numbers.filter( i => servers.list[i] == '' ).map( i => {
+				bot.api.reactions.add({ timestamp: message.ts, channel: message.channel, name: literals[i], }, (api_err) => { if (api_err) { console.log(api_err) } });
+			});
 			
 			controller.storage.users.save(servers);
-						
-			bot.reply(message, [0, 1, 2, 3, 4].map( i => `Feature ${i} being used by ${servers.list[i]}` ).join("\n"));
 			
 		});
 
@@ -255,6 +285,13 @@ controller.hears([ /free\s+feature\s*(\d)/i, /feature\s*(\d).*free/i ], 'direct_
     });
 	
 });
+
+
+
+controller.hears(['help'], 'direct_message,direct_mention,mention', function(bot, message) {
+    bot.reply(message, "Calm down my friend. You can use `feature status` to have a quick glance on what servers are free. `feature full status` for a full one with names. `use faeture x` or `using feature x` for getting a feature site. `free feature x` and `feature x ...... free` to free a site.");
+});
+
 
 controller.hears(['call me (.*)', 'my name is (.*)'], 'direct_message,direct_mention,mention', function(bot, message) {
     var name = message.match[1];
@@ -344,7 +381,7 @@ controller.hears(['shutdown'], 'direct_message,direct_mention,mention', function
 
     bot.startConversation(message, function(err, convo) {
 
-        convo.ask('Are you sure you want me to shutdown?', [
+        convo.ask('Shutdown?', [
             {
                 pattern: bot.utterances.yes,
                 callback: function(response, convo) {
